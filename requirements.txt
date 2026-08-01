@@ -1,3 +1,6 @@
-streamlit
-faster-whisper
-moviepy
+streamlit>=1.32
+faster-whisper>=1.0
+moviepy>=2.0
+imageio-ffmpeg>=0.4.9
+Pillow>=10.0
+numpy>=1.26
