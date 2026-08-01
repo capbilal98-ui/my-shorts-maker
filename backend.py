@@ -15,8 +15,48 @@ from typing import BinaryIO
 
 import numpy as np
 from faster_whisper import WhisperModel
-from moviepy.editor import CompositeVideoClip, ImageClip, VideoFileClip
 from PIL import Image, ImageDraw, ImageFont
+
+# ---------------------------------------------------------------------------
+# moviepy v1 / v2 compatibility shim
+# ---------------------------------------------------------------------------
+# moviepy 2.0 removed the `moviepy.editor` module and renamed several clip
+# methods (subclip -> subclipped, set_start -> with_start, etc). This shim
+# lets the rest of the file use one consistent API regardless of which
+# major version is installed.
+try:
+    from moviepy.editor import CompositeVideoClip, ImageClip, VideoFileClip
+
+    _MOVIEPY_V2 = False
+except ImportError:  # moviepy >= 2.0
+    from moviepy import CompositeVideoClip, ImageClip, VideoFileClip
+    from moviepy import vfx
+
+    _MOVIEPY_V2 = True
+
+
+def _subclip(clip, start, end):
+    if _MOVIEPY_V2:
+        return clip.subclipped(start, end)
+    return clip.subclip(start, end)
+
+
+def _crop(clip, x_center, width, height):
+    if _MOVIEPY_V2:
+        return clip.with_effects([vfx.Crop(x_center=x_center, width=width, height=height)])
+    return clip.crop(x_center=x_center, width=width, height=height)
+
+
+def _with_start(clip, start):
+    return clip.with_start(start) if _MOVIEPY_V2 else clip.set_start(start)
+
+
+def _with_duration(clip, duration):
+    return clip.with_duration(duration) if _MOVIEPY_V2 else clip.set_duration(duration)
+
+
+def _with_position(clip, position):
+    return clip.with_position(position) if _MOVIEPY_V2 else clip.set_position(position)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("shorts_maker")
@@ -98,7 +138,7 @@ def _crop_to_vertical(clip: VideoFileClip) -> VideoFileClip:
     if target_width > width:
         # Source is already narrower than 9:16 — nothing sensible to crop.
         return clip
-    return clip.crop(x_center=width / 2, width=target_width, height=height)
+    return _crop(clip, x_center=width / 2, width=target_width, height=height)
 
 
 def _render_word_image(word_text: str, config: ShortConfig, frame_width: int) -> np.ndarray:
@@ -146,12 +186,10 @@ def _build_caption_clips(segments, config: ShortConfig, clip_duration: float, fr
             duration = max(word.end - word.start, 0.1)
             frame = _render_word_image(clean_word, config, frame_width)
 
-            word_clip = (
-                ImageClip(frame, ismask=False)
-                .set_start(word.start)
-                .set_duration(duration)
-                .set_position(("center", frame_height * config.caption_y_ratio))
-            )
+            word_clip = ImageClip(frame, ismask=False)
+            word_clip = _with_start(word_clip, word.start)
+            word_clip = _with_duration(word_clip, duration)
+            word_clip = _with_position(word_clip, ("center", frame_height * config.caption_y_ratio))
             caption_clips.append(word_clip)
     return caption_clips
 
@@ -178,7 +216,7 @@ def make_my_short(video_file: BinaryIO, start_sec: float, end_sec: float,
 
     try:
         logger.info("Loading and trimming video...")
-        source_clip = VideoFileClip(temp_input_path).subclip(config.start_sec, config.end_sec)
+        source_clip = _subclip(VideoFileClip(temp_input_path), config.start_sec, config.end_sec)
         vertical_clip = _crop_to_vertical(source_clip)
         clip_duration = config.end_sec - config.start_sec
 
